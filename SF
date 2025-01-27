@@ -1,0 +1,67 @@
+{
+  "Comment": "Trigger AWS Glue job with Step Function",
+  "StartAt": "Start Glue Job",
+  "States": {
+    "Start Glue Job": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:glue:startJobRun",
+      "Parameters": {
+        "JobName": "your-glue-job-name",
+        "Arguments": {
+          "--STEP_FUNCTION_OUTPUT.$": "$"
+        }
+      },
+      "Next": "Wait for Glue Job",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "Fail"
+        }
+      ]
+    },
+    "Wait for Glue Job": {
+      "Type": "Wait",
+      "Seconds": 30,
+      "Next": "Check Glue Job Status"
+    },
+    "Check Glue Job Status": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::aws-sdk:glue:getJobRun",
+      "Parameters": {
+        "JobName": "your-glue-job-name",
+        "RunId.$": "$.JobRunId"
+      },
+      "Next": "Evaluate Job Status",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "Fail"
+        }
+      ]
+    },
+    "Evaluate Job Status": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.JobRun.JobRunState",
+          "StringEquals": "SUCCEEDED",
+          "Next": "Success"
+        },
+        {
+          "Variable": "$.JobRun.JobRunState",
+          "StringEquals": "FAILED",
+          "Next": "Fail"
+        }
+      ],
+      "Default": "Wait for Glue Job"
+    },
+    "Success": {
+      "Type": "Succeed"
+    },
+    "Fail": {
+      "Type": "Fail",
+      "Error": "JobFailed",
+      "Cause": "AWS Glue job failed."
+    }
+  }
+}
