@@ -1,0 +1,41 @@
+import sys
+import json
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.transforms import *
+from awsglue.utils import getResolvedOptions
+from awsglue.dynamicframe import DynamicFrame
+
+# Initialize Glue context
+args = getResolvedOptions(sys.argv, ['JOB_NAME', 'STEP_FUNCTION_OUTPUT'])
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+job = glueContext.create_job(args['JOB_NAME'])
+
+# Parse input from Step Function output
+step_function_output = json.loads(args['STEP_FUNCTION_OUTPUT'])
+source_bucket = step_function_output['bucket']
+source_key = step_function_output['file_name']
+iceberg_table = step_function_output['iceberg_table']
+
+source_path = f"s3://{source_bucket}/{source_key}"
+
+# Read CSV file into a DynamicFrame
+dyf_csv = glueContext.create_dynamic_frame.from_options(
+    connection_type="s3",
+    connection_options={"paths": [source_path]},
+    format="csv",
+    format_options={"withHeader": True, "separator": ","}
+)
+
+# Convert DynamicFrame to DataFrame for Iceberg table operations
+df = dyf_csv.toDF()
+
+# Write to Iceberg table
+df.write.format("iceberg").mode("append").save(iceberg_table)
+
+print("Data successfully inserted into Iceberg table.")
+
+# Commit the Glue job
+job.commit()
