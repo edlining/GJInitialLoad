@@ -47,7 +47,7 @@ PARTITIONED BY (created_at);
 spark.sql(f"CREATE DATABASE IF NOT EXISTS glue_catalog.{database_name}")
 spark.sql(create_table_sql)
 
-print(f"✅ Table '{table_name}' created successfully in Iceberg database '{database_name}'.")
+print(f" Table '{table_name}' created successfully in Iceberg database '{database_name}'.")
 
 # Sample data to insert
 data = [
@@ -61,7 +61,7 @@ df = spark.createDataFrame(data, ["id", "name", "age", "created_at"])
 # Write data to the Iceberg table
 df.writeTo(f"glue_catalog.{database_name}.{table_name}").using("iceberg").createOrReplace()
 
-print(f"✅ Data inserted into '{table_name}' successfully.")
+print(f" Data inserted into '{table_name}' successfully.")
 
 # Commit Glue job
 job = Job(glueContext)
