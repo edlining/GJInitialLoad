@@ -1,0 +1,61 @@
+import sys
+from awsglue.context import GlueContext
+from awsglue.job import Job
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
+
+# Read job arguments
+args = getResolvedOptions(sys.argv, ["JOB_NAME"])
+
+# Initialize Spark and Glue contexts
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+
+# Enable Iceberg support
+spark.conf.set("spark.sql.catalog.glue_catalog", "org.apache.iceberg.spark.SparkCatalog")
+spark.conf.set("spark.sql.catalog.glue_catalog.catalog-impl", "org.apache.iceberg.aws.glue.GlueCatalog")
+spark.conf.set("spark.sql.catalog.glue_catalog.io-impl", "org.apache.iceberg.aws.s3.S3FileIO")
+spark.conf.set("spark.sql.catalog.glue_catalog.warehouse", "s3://your-bucket/iceberg/")  # Update with your S3 bucket
+
+# Define database and table
+database_name = "iceberg_db"
+table_name = "iceberg_table"
+
+# SQL statement to create Iceberg table
+create_table_sql = f"""
+CREATE TABLE IF NOT EXISTS glue_catalog.{database_name}.{table_name} (
+    id INT,
+    name STRING,
+    age INT,
+    created_at TIMESTAMP
+) USING iceberg
+PARTITIONED BY (created_at);
+"""
+
+# Execute SQL to create the Iceberg table
+spark.sql(f"CREATE DATABASE IF NOT EXISTS glue_catalog.{database_name}")
+spark.sql(create_table_sql)
+
+print(f"Table {table_name} created successfully in database {database_name}")
+
+# Sample data to insert
+data = [
+    (1, "Alice", 30, "2024-01-01 12:00:00"),
+    (2, "Bob", 25, "2024-01-02 14:00:00"),
+]
+
+# Convert data to a DataFrame
+df = spark.createDataFrame(data, ["id", "name", "age", "created_at"])
+
+# Write data to the Iceberg table
+df.writeTo(f"glue_catalog.{database_name}.{table_name}").using("iceberg").createOrReplace()
+
+print(f"Data inserted into {table_name} successfully.")
+
+# Commit Glue job
+job = Job(glueContext)
+job.init(args["JOB_NAME"], args)
+job.commit()
