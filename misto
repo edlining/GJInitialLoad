@@ -1,0 +1,15 @@
+(B) Creating the Iceberg Table in Glue with Spark
+If using AWS Glue Job (Spark), add this in your script:
+
+python
+Copy
+Edit
+spark.sql("""
+    CREATE TABLE IF NOT EXISTS glue_catalog.my_database.my_table (
+        id INT,
+        name STRING,
+        value DOUBLE
+    ) USING iceberg
+""")
+📌 Note: The default catalog in Glue is glue_catalog. Use SHOW DATABASES to confirm.
+
