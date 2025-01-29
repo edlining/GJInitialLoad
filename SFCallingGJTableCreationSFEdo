@@ -41,3 +41,12 @@
     }
   }
 }
+
+
+Inpit to insert:
+
+{
+  "table_details": {
+    "table_name": "my_dynamic_table"
+  }
+}
