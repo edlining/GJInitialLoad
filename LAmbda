@@ -1,0 +1,15 @@
+import boto3
+import json
+
+client = boto3.client("stepfunctions")
+
+response = client.start_execution(
+    stateMachineArn="arn:aws:states:your-region:your-account-id:stateMachine:EdoardoGlueJob",
+    input=json.dumps({
+        "table_details": {
+            "table_name": "orders_table"
+        }
+    })
+)
+
+print("Step Function Execution Started:", response["executionArn"])
