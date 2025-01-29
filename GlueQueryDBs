@@ -1,0 +1,33 @@
+import sys
+import json
+from pyspark.context import SparkContext
+from awsglue.context import GlueContext
+from awsglue.utils import getResolvedOptions
+from awsglue.job import Job
+from pyspark.sql import SparkSession
+
+# Initialize Glue context and job
+args = getResolvedOptions(sys.argv, ['JOB_NAME'])
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+job = Job(glueContext)
+job.init(args['JOB_NAME'], args)
+
+# Ensure Spark is configured for Iceberg
+spark = SparkSession.builder \
+    .config("spark.sql.catalog.glue_catalog", "org.apache.iceberg.spark.SparkCatalog") \
+    .config("spark.sql.catalog.glue_catalog.catalog-impl", "org.apache.iceberg.aws.glue.GlueCatalog") \
+    .config("spark.sql.catalog.glue_catalog.io-impl", "org.apache.iceberg.aws.s3.S3FileIO") \
+    .getOrCreate()
+
+# Query Glue Data Catalog to get all Iceberg databases
+databases = spark.sql("SHOW DATABASES").collect()
+
+# Print all Iceberg databases
+print("List of Iceberg Databases:")
+for db in databases:
+    print(db[0])
+
+# Commit the Glue job
+job.commit()
