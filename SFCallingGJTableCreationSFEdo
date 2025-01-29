@@ -1,0 +1,43 @@
+{
+  "Comment": "Step Function to trigger AWS Glue Job for Iceberg table creation",
+  "StartAt": "StartGlueJob",
+  "States": {
+    "StartGlueJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::glue:startJobRun",
+      "Parameters": {
+        "JobName": "GJTableCreationSFEdo",
+        "Arguments": {
+          "--INPUT_JSON.$": "States.JsonToString($.table_details)"
+        }
+      },
+      "TimeoutSeconds": 600,
+      "Retry": [
+        {
+          "ErrorEquals": ["Glue.JobFailed"],
+          "IntervalSeconds": 30,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "JobFailed",
+          "ResultPath": "$.error"
+        }
+      ],
+      "Next": "JobSucceeded"
+    },
+    "JobSucceeded": {
+      "Type": "Pass",
+      "Result": "Glue job completed successfully.",
+      "End": true
+    },
+    "JobFailed": {
+      "Type": "Fail",
+      "Error": "GlueJobFailed",
+      "Cause": "AWS Glue Job failed."
+    }
+  }
+}
