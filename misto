@@ -13,3 +13,14 @@ spark.sql("""
 """)
 📌 Note: The default catalog in Glue is glue_catalog. Use SHOW DATABASES to confirm.
 
+
+
+spark.sql("""
+    CREATE TABLE IF NOT EXISTS glue_catalog.my_database.my_table 
+    USING iceberg
+    TBLPROPERTIES ('format-version'='2')
+    AS 
+    SELECT * FROM balanceupdates
+""")
+
+
