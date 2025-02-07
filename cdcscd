@@ -35,59 +35,80 @@ schema = StructType([
 # Read source CSV file without headers and apply schema
 source_df = spark.read.option("header", "false").schema(schema).csv(s3_source_path)
 
-# Read existing Iceberg table
-existing_df = spark.read.format("iceberg").load(iceberg_table)
-
 # Define SCD Type 2 columns
 start_date_col = "start_date"
 end_date_col = "end_date"
 active_col = "is_active"
 
-# Join source and existing Iceberg data to detect changes
-join_condition = source_df["id"] == existing_df["id"]
-merged_df = source_df.alias("src").join(
-    existing_df.alias("tgt"), join_condition, "outer"
-)
+# Try to read the existing Iceberg table
+try:
+    existing_df = spark.read.format("iceberg").load(iceberg_table)
+    table_exists = True
+except:
+    table_exists = False
 
-# Identify new records (not in Iceberg table)
-new_records = (
-    merged_df.filter(col("tgt.id").isNull())
-    .select("src.*")
-    .withColumn(start_date_col, current_date())
-    .withColumn(end_date_col, lit(None).cast(DateType()))
-    .withColumn(active_col, lit(True))
-)
+# **INITIAL LOAD (if table does not exist)**
+if not table_exists:
+    print("Performing initial load...")
+    initial_df = (
+        source_df
+        .withColumn(start_date_col, current_date())
+        .withColumn(end_date_col, lit(None).cast(DateType()))
+        .withColumn(active_col, lit(True))
+    )
+    
+    # Write initial data to Iceberg table
+    initial_df.write.format("iceberg").mode("overwrite").save(iceberg_table)
+    print("Initial load completed successfully.")
+else:
+    # **INCREMENTAL LOAD (CDC + SCD Type 2)**
+    print("Performing incremental CDC load...")
 
-# Identify changed records (existing but with different values)
-changed_records = merged_df.filter(
-    (col("src.id").isNotNull()) & (col("tgt.id").isNotNull()) & (col("src.email") != col("tgt.email"))
-)
+    # Join source and existing Iceberg data to detect changes
+    join_condition = source_df["id"] == existing_df["id"]
+    merged_df = source_df.alias("src").join(
+        existing_df.alias("tgt"), join_condition, "outer"
+    )
 
-# Mark old versions as inactive (set end_date)
-closed_records = (
-    changed_records.select("tgt.*")
-    .withColumn(end_date_col, current_date())
-    .withColumn(active_col, lit(False))
-)
+    # Identify new records (not in Iceberg table)
+    new_records = (
+        merged_df.filter(col("tgt.id").isNull())
+        .select("src.*")
+        .withColumn(start_date_col, current_date())
+        .withColumn(end_date_col, lit(None).cast(DateType()))
+        .withColumn(active_col, lit(True))
+    )
 
-# Insert new versions of changed records
-updated_records = (
-    changed_records.select("src.*")
-    .withColumn(start_date_col, current_date())
-    .withColumn(end_date_col, lit(None).cast(DateType()))
-    .withColumn(active_col, lit(True))
-)
+    # Identify changed records (existing but with different values)
+    changed_records = merged_df.filter(
+        (col("src.id").isNotNull()) & (col("tgt.id").isNotNull()) & (col("src.email") != col("tgt.email"))
+    )
 
-# Unchanged records remain the same
-unchanged_records = (
-    merged_df.filter(col("src.id").isNotNull() & col("tgt.id").isNotNull() & (col("src.email") == col("tgt.email")))
-    .select("tgt.*")
-)
+    # Mark old versions as inactive (set end_date)
+    closed_records = (
+        changed_records.select("tgt.*")
+        .withColumn(end_date_col, current_date())
+        .withColumn(active_col, lit(False))
+    )
 
-# Combine all records
-final_df = new_records.unionByName(closed_records).unionByName(updated_records).unionByName(unchanged_records)
+    # Insert new versions of changed records
+    updated_records = (
+        changed_records.select("src.*")
+        .withColumn(start_date_col, current_date())
+        .withColumn(end_date_col, lit(None).cast(DateType()))
+        .withColumn(active_col, lit(True))
+    )
 
-# Write to Iceberg table
-final_df.write.format("iceberg").mode("overwrite").save(iceberg_table)
+    # Unchanged records remain the same
+    unchanged_records = (
+        merged_df.filter(col("src.id").isNotNull() & col("tgt.id").isNotNull() & (col("src.email") == col("tgt.email")))
+        .select("tgt.*")
+    )
 
-print("SCD Type 2 processing completed successfully.")
+    # Combine all records
+    final_df = new_records.unionByName(closed_records).unionByName(updated_records).unionByName(unchanged_records)
+
+    # Write to Iceberg table
+    final_df.write.format("iceberg").mode("overwrite").save(iceberg_table)
+
+    print("Incremental CDC load completed successfully.")
