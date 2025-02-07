@@ -1,0 +1,93 @@
+import sys
+from awsglue.context import GlueContext
+from awsglue.job import Job
+from awsglue.utils import getResolvedOptions
+from pyspark.context import SparkContext
+from pyspark.sql import SparkSession
+from pyspark.sql.types import StructType, StructField, IntegerType, StringType, DateType
+from pyspark.sql.functions import col, lit, current_date
+
+# Get Glue job arguments
+args = getResolvedOptions(sys.argv, ['JOB_NAME', 'S3_SOURCE_PATH', 'S3_ICEBERG_PATH'])
+
+# Initialize Glue and Spark
+sc = SparkContext()
+glueContext = GlueContext(sc)
+spark = glueContext.spark_session
+
+# Enable Iceberg Support
+spark.conf.set("spark.sql.catalog.glue_catalog", "org.apache.iceberg.spark.SparkCatalog")
+spark.conf.set("spark.sql.catalog.glue_catalog.type", "hadoop")
+spark.conf.set("spark.sql.catalog.glue_catalog.warehouse", args['S3_ICEBERG_PATH'])
+
+# Define source and target paths
+s3_source_path = args['S3_SOURCE_PATH']
+iceberg_table = "glue_catalog.db.iceberg_table"
+
+# Define the schema manually (since the CSV has no header)
+schema = StructType([
+    StructField("id", IntegerType(), False),   # Unique identifier
+    StructField("name", StringType(), True),
+    StructField("email", StringType(), True),
+    StructField("phone", StringType(), True)
+])
+
+# Read source CSV file without headers and apply schema
+source_df = spark.read.option("header", "false").schema(schema).csv(s3_source_path)
+
+# Read existing Iceberg table
+existing_df = spark.read.format("iceberg").load(iceberg_table)
+
+# Define SCD Type 2 columns
+start_date_col = "start_date"
+end_date_col = "end_date"
+active_col = "is_active"
+
+# Join source and existing Iceberg data to detect changes
+join_condition = source_df["id"] == existing_df["id"]
+merged_df = source_df.alias("src").join(
+    existing_df.alias("tgt"), join_condition, "outer"
+)
+
+# Identify new records (not in Iceberg table)
+new_records = (
+    merged_df.filter(col("tgt.id").isNull())
+    .select("src.*")
+    .withColumn(start_date_col, current_date())
+    .withColumn(end_date_col, lit(None).cast(DateType()))
+    .withColumn(active_col, lit(True))
+)
+
+# Identify changed records (existing but with different values)
+changed_records = merged_df.filter(
+    (col("src.id").isNotNull()) & (col("tgt.id").isNotNull()) & (col("src.email") != col("tgt.email"))
+)
+
+# Mark old versions as inactive (set end_date)
+closed_records = (
+    changed_records.select("tgt.*")
+    .withColumn(end_date_col, current_date())
+    .withColumn(active_col, lit(False))
+)
+
+# Insert new versions of changed records
+updated_records = (
+    changed_records.select("src.*")
+    .withColumn(start_date_col, current_date())
+    .withColumn(end_date_col, lit(None).cast(DateType()))
+    .withColumn(active_col, lit(True))
+)
+
+# Unchanged records remain the same
+unchanged_records = (
+    merged_df.filter(col("src.id").isNotNull() & col("tgt.id").isNotNull() & (col("src.email") == col("tgt.email")))
+    .select("tgt.*")
+)
+
+# Combine all records
+final_df = new_records.unionByName(closed_records).unionByName(updated_records).unionByName(unchanged_records)
+
+# Write to Iceberg table
+final_df.write.format("iceberg").mode("overwrite").save(iceberg_table)
+
+print("SCD Type 2 processing completed successfully.")
